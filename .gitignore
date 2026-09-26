@@ -1,0 +1,22 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+
+# Configuration & Secrets
+.env
+db.sqlite3
+
+# Node/Frontend dependencies
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# IDEs and System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
