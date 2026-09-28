@@ -2,6 +2,7 @@
 from django.db import models
 from django.conf import settings
 from projects.models import Project
+from django.utils import timezone
 
 
 class Task(models.Model):
@@ -41,6 +42,12 @@ class Task(models.Model):
 
     def __str__(self):
         return self.title
+    def save(self, *args, **kwargs):
+        if self.status == self.DONE and self.completed_at is None:
+            self.completed_at = timezone.now()
+        elif self.status != self.DONE:
+            self.completed_at = None
+        super().save(*args, **kwargs)
 
 
 class Comment(models.Model):

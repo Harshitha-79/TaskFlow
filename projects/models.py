@@ -22,15 +22,14 @@ class Project(models.Model):
 
 # FIX: Name aligns with the through definition above
 class Membership(models.Model):
-    ROLE_CHOICES = (
-        ('OWNER', 'Owner'),
-        ('MEMBER', 'Member'),
-    )
-    
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    project = models.ForeignKey(Project, on_delete=models.CASCADE)
-    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='MEMBER')
-    invited_at = models.DateTimeField(auto_now_add=True)
+    OWNER = 'owner'
+    MEMBER = 'member'
+    ROLE_CHOICES = [(OWNER, 'Owner'), (MEMBER, 'Member')]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='memberships')
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='memberships')
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default=MEMBER)
+    joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ('user', 'project')
