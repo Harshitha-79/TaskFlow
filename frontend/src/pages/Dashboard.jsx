@@ -1,33 +1,47 @@
-import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../hooks/useAuth';
+import { Link } from 'react-router-dom';
+import api from '../services/api';
+import useFetch from '../hooks/useFetch';
+import useLiveEvents from '../hooks/useLiveEvents';
+import { who } from '../services/utils';
+import { Spinner, ErrorBox } from '../components/ui';
+
+const Stat = ({ label, value }) => (
+  <div className="rounded border bg-white p-4"><p className="text-sm text-gray-500">{label}</p><p className="text-2xl font-bold">{value}</p></div>
+);
 
 export default function Dashboard() {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
+  const { data, loading, error, reload } = useFetch(() => api.get('/dashboard/').then((r) => r.data), 'dashboard');
+  useLiveEvents(() => reload(true), () => reload(true));
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-    } finally {
-      navigate('/login', { replace: true });
-    }
-  };
+  if (loading && !data) return <Spinner />;
+  if (error && !data) return <ErrorBox message={error} onRetry={reload} />;
+  const bp = data.busiest_project;
+  const s = data.tasks_by_status;
 
   return (
-    <main className="min-h-screen bg-stone-50 text-stone-900">
-      <header className="flex items-center justify-between border-b border-stone-200 bg-white px-6 py-4">
-        <h1 className="text-xl font-semibold">TaskFlow</h1>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-stone-600">{user?.email}</span>
-          <button type="button" onClick={handleLogout} className="rounded border border-stone-300 px-3 py-2 text-sm hover:bg-stone-100">
-            Log out
-          </button>
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <Stat label="Projects" value={data.project_count} />
+        <Stat label="To Do (mine)" value={s.todo} />
+        <Stat label="In Progress (mine)" value={s.in_progress} />
+        <Stat label="Done (mine)" value={s.done} />
+        <Stat label="Completed this week" value={data.completed_this_week} />
+        <div className="rounded border bg-white p-4">
+          <p className="text-sm text-gray-500">Most open tasks</p>
+          {bp ? <Link to={`/projects/${bp.id}`} className="font-semibold text-blue-600">{bp.title ?? bp.name} ({bp.open_tasks})</Link>
+              : <p className="text-gray-400">None</p>}
         </div>
-      </header>
-      <section className="mx-auto max-w-5xl px-6 py-12">
-        <h2 className="text-2xl font-semibold">Your workspace</h2>
-        <p className="mt-2 text-stone-600">You’re signed in. Your projects will appear here.</p>
-      </section>
-    </main>
+      </div>
+      <div className="rounded border bg-white p-4">
+        <h2 className="mb-2 font-semibold">My recent activity</h2>
+        {data.recent_activity.length === 0 && <p className="text-gray-500">No activity yet.</p>}
+        <ul className="space-y-1 text-sm">
+          {data.recent_activity.map((a) => (
+            <li key={a.id}>{who(a.actor)} {a.description}
+              <span className="ml-2 text-xs text-gray-400">{new Date(a.created_at).toLocaleString()}</span></li>
+          ))}
+        </ul>
+      </div>
+    </div>
   );
 }

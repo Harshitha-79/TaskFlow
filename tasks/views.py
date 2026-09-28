@@ -130,7 +130,7 @@ class DashboardView(APIView):
 
         top = (Project.objects.filter(memberships__user=user)
                .annotate(open_tasks=Count('tasks', filter=~Q(tasks__status=Task.DONE)))
-               .order_by('-open_tasks', 'name').first())
+             .order_by('-open_tasks', 'title').first())
 
         return Response({
             'project_count': Project.objects.filter(memberships__user=user).count(),
