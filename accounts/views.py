@@ -1,79 +1,111 @@
-from rest_framework import status, permissions
+from django.conf import settings
+from rest_framework import permissions, status
+from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView
+
 from .serializers import UserRegisterSerializer, UserSerializer
 
+REFRESH_COOKIE = 'refresh_token'
+COOKIE_KWARGS = dict(
+    httponly=True,
+    secure=not settings.DEBUG,  # True automatically in production (HTTPS)
+    samesite='Lax',
+    max_age=int(settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME'].total_seconds()),
+)
+
+
 class RegisterView(APIView):
-    permission_classes = (permissions.AllowAny,)
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         serializer = UserRegisterSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save()
-            
-            # Generate JWT tokens immediately upon registration
-            refresh = RefreshToken.for_user(user)
-            res = Response({
-                "user": UserSerializer(user).data,
-                "access": str(refresh.access_token),
-            }, status=status.HTTP_201_CREATED)
-            
-            # Set the refresh token securely as an httpOnly cookie
-            res.set_cookie(
-                key='refresh_token',
-                value=str(refresh),
-                httponly=True,
-                secure=False,  # Set to True in production over HTTPS
-                samesite='Lax',
-                max_age=7 * 24 * 60 * 60 # 7 days matches settings
-            )
-            return res
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)  # 400 with field errors
+        user = serializer.save()
 
-class CustomTokenObtainPairView(TokenObtainPairView):
-    """
-    Overrides the default login to drop the refresh token into a secure cookie 
-    instead of exposing it completely to frontend JavaScript storage engines.
-    """
-    def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
-        if response.status_code == 200:
-            refresh_token = response.data.pop('refresh')
-            response.set_cookie(
-                key='refresh_token',
-                value=refresh_token,
-                httponly=True,
-                secure=False,
-                samesite='Lax',
-                max_age=7 * 24 * 60 * 60
-            )
+        refresh = RefreshToken.for_user(user)
+        response = Response(
+            {'user': UserSerializer(user).data, 'access': str(refresh.access_token)},
+            status=status.HTTP_201_CREATED,
+        )
+        response.set_cookie(REFRESH_COOKIE, str(refresh), **COOKIE_KWARGS)
         return response
 
-class CustomTokenRefreshView(TokenRefreshView):
-    """
-    Extracts the cookie-based refresh token automatically to seamlessly issue 
-    a fresh short-lived access token during 401 transparent intercepts.
-    """
-    def post(self, request, *args, **kwargs):
-        refresh_token = request.COOKIES.get('refresh_token')
-        if refresh_token:
-            request.data['refresh'] = refresh_token
-        return super().post(request, *args, **kwargs)
 
-class LogoutView(APIView):
-    permission_classes = (permissions.IsAuthenticated,)
+class CustomTokenObtainPairView(TokenObtainPairView):
+    """Login: access token + user in the body, refresh token only in an httpOnly cookie."""
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)  # bad credentials -> 401
+        except TokenError as e:
+            raise InvalidToken(e.args[0])
+
+        data = serializer.validated_data
+        response = Response({
+            'access': data['access'],
+            'user': UserSerializer(serializer.user).data,
+        })
+        response.set_cookie(REFRESH_COOKIE, data['refresh'], **COOKIE_KWARGS)
+        return response
+
+
+class RefreshView(APIView):
+    """Reads the refresh token from the cookie, returns a new access token,
+    and rotates the cookie (old refresh token is blacklisted)."""
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def post(self, request):
+        raw = request.COOKIES.get(REFRESH_COOKIE)
+        if not raw:
+            return Response({'detail': 'No refresh token.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        serializer = TokenRefreshSerializer(data={'refresh': raw})
         try:
-            refresh_token = request.COOKIES.get('refresh_token')
-            if refresh_token:
-                token = RefreshToken(refresh_token)
-                token.blacklist() # Blacklists the token to protect the account
-            
-            response = Response({"message": "Successfully logged out."}, status=status.HTTP_200_OK)
-            response.delete_cookie('refresh_token')
-            return response
-        except Exception:
-            return Response({"error": "Invalid token or already logged out."}, status=status.HTTP_400_BAD_REQUEST)
+            serializer.is_valid(raise_exception=True)
+        except (TokenError, InvalidToken, AuthenticationFailed, ValidationError):
+            return Response(
+                {'detail': 'Invalid or expired refresh token.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        data = serializer.validated_data
+        response = Response({'access': data['access']})
+        if 'refresh' in data:  # ROTATE_REFRESH_TOKENS is on
+            response.set_cookie(REFRESH_COOKIE, data['refresh'], **COOKIE_KWARGS)
+        return response
+
+
+# Alias so any existing urls.py that references the old name keeps working
+CustomTokenRefreshView = RefreshView
+
+
+class LogoutView(APIView):
+    """Idempotent: always clears the cookie, even if the access token already expired."""
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        raw = request.COOKIES.get(REFRESH_COOKIE)
+        if raw:
+            try:
+                RefreshToken(raw).blacklist()
+            except TokenError:
+                pass  # already expired/blacklisted; nothing more to revoke
+        response = Response({'message': 'Successfully logged out.'})
+        response.delete_cookie(REFRESH_COOKIE, samesite=COOKIE_KWARGS['samesite'])
+        return response
+
+
+class MeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response(UserSerializer(request.user).data)
