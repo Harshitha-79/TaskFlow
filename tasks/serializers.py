@@ -48,4 +48,6 @@ class TaskSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {'assignee_id': 'Assignee must be a member of this project.'}
                 )
+                if self.instance and 'project' in attrs and attrs['project'] != self.instance.project:
+                    raise serializers.ValidationError({'project': 'A task cannot be moved to another project.'})    
         return attrs

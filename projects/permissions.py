@@ -20,11 +20,13 @@ class IsProjectOwner(permissions.BasePermission):
 
 
 class CanMarkTaskDone(permissions.BasePermission):
-    """Only the task's assignee or the project owner may set status to Done."""
+    message = "Only the task's assignee or the project owner can mark it as Done."
 
     def has_object_permission(self, request, view, obj):
-        if request.data.get('status') != 'done':
-            return True  # not attempting to mark Done, defer to other checks
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        if request.data.get('status') != 'done' or obj.status == 'done':
+            return True
         if obj.assignee_id == request.user.id:
             return True
         return Membership.objects.filter(
