@@ -1,4 +1,4 @@
-# TaskFlow (mini)
+# TaskFlow 
 
 Collaborative task board: projects, members with roles, Kanban tasks, comments, activity feed, dashboard,
 and live updates over WebSockets. Stack: React (Vite) + Django REST Framework + Django Channels + PostgreSQL + Redis.
